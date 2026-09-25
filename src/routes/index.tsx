@@ -111,6 +111,10 @@ function ExchangeCard({ snapshot }: { snapshot: ExchangeSnapshot }) {
 				<div className="mt-1 text-muted-foreground">
 					{usd.format(snapshot.stableBalance)} · {snapshot.positions.length}{" "}
 					positions
+					<div className="text-xs">
+						{snapshot.cached ? "Cached" : "Live"} ·{" "}
+						{new Date(snapshot.fetchedAt).toLocaleTimeString()}
+					</div>
 				</div>
 			)}
 			{snapshot.status === "not_configured" && (

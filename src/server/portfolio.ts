@@ -1,6 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import type { Balances, Position as CcxtPosition } from "ccxt";
-import { EXCHANGE_IDS, type ExchangeId, getClient } from "./exchanges";
+import { balanceSnapshots, positionSnapshots } from "#/db/schema";
+import {
+	EXCHANGE_IDS,
+	type ExchangeId,
+	getSource,
+	type Source,
+} from "./exchanges";
+import { recordedCall } from "./recorder";
 
 const STABLES = ["USDC", "USDT", "USD", "USDE"];
 
@@ -23,6 +30,8 @@ export type ExchangeSnapshot =
 	| {
 			id: ExchangeId;
 			status: "ok";
+			fetchedAt: number;
+			cached: boolean;
 			stableBalance: number;
 			balances: Balance[];
 			positions: Position[];
@@ -61,6 +70,54 @@ function toPosition(exchange: ExchangeId, p: CcxtPosition): Position {
 	};
 }
 
+const CACHE_TTL_MS = Number(process.env.CACHE_TTL_SEC ?? 10) * 1000;
+
+function recordBalance(source: Source) {
+	const { client } = source;
+	return recordedCall(
+		source,
+		"fetchBalance",
+		async () => {
+			await client.loadMarkets();
+			return client.fetchBalance();
+		},
+		{
+			ttlMs: CACHE_TTL_MS,
+			onRecord: async (tx, ref, raw) => {
+				const rows = toBalances(raw);
+				if (rows.length === 0) return;
+				await tx
+					.insert(balanceSnapshots)
+					.values(
+						rows.map((b) => ({ ...b, ...ref, exchange: source.exchange })),
+					);
+			},
+		},
+	);
+}
+
+function recordPositions(source: Source) {
+	const { client } = source;
+	return recordedCall(
+		source,
+		"fetchPositions",
+		async () => {
+			await client.loadMarkets();
+			return client.fetchPositions();
+		},
+		{
+			ttlMs: CACHE_TTL_MS,
+			onRecord: async (tx, ref, raw) => {
+				const rows = toPositions(source.exchange, raw);
+				if (rows.length === 0) return;
+				await tx
+					.insert(positionSnapshots)
+					.values(rows.map((p) => ({ ...p, ...ref })));
+			},
+		},
+	);
+}
+
 function toPositions(id: ExchangeId, raw: CcxtPosition[]): Position[] {
 	return raw
 		.filter((p) => (p.contracts ?? 0) !== 0)
@@ -68,23 +125,24 @@ function toPositions(id: ExchangeId, raw: CcxtPosition[]): Position[] {
 }
 
 async function snapshot(id: ExchangeId): Promise<ExchangeSnapshot> {
-	const client = getClient(id);
-	if (!client) return { id, status: "not_configured" };
+	const source = getSource(id);
+	if (!source) return { id, status: "not_configured" };
 	try {
-		await client.loadMarkets();
-		const [rawBalance, rawPositions] = await Promise.all([
-			client.fetchBalance(),
-			client.fetchPositions(),
+		const [balance, positions] = await Promise.all([
+			recordBalance(source),
+			recordPositions(source),
 		]);
-		const balances = toBalances(rawBalance);
+		const balances = toBalances(balance.data);
 		return {
 			id,
 			status: "ok",
+			fetchedAt: Math.min(balance.fetchedAt, positions.fetchedAt),
+			cached: balance.cached && positions.cached,
 			balances,
 			stableBalance: balances
 				.filter((b) => STABLES.includes(b.asset))
 				.reduce((sum, b) => sum + b.total, 0),
-			positions: toPositions(id, rawPositions),
+			positions: toPositions(id, positions.data),
 		};
 	} catch (err) {
 		return {
