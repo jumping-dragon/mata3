@@ -50,6 +50,17 @@ GROUP BY ALL
 ORDER BY ts;
 ```
 
+### SQL page
+
+`/sql` runs ad-hoc queries against the local database file, with a table/column list and example queries. The query sits in the URL (`?q=`), so back/forward and links work.
+
+The editor (`src/components/sql-editor.tsx`) is CodeMirror with SQLite highlighting and autocomplete for table and column names. ⌘/Ctrl+Enter runs, ⌘/Ctrl+Shift+F (or the Format button) formats with `sql-formatter`, and one undo reverts a format.
+
+- Read-only is enforced by SQLite: the page opens its own connection with `SQLITE_OPEN_READONLY` (`bun:sqlite` under bun, `node:sqlite` under node). Writes, schema changes and `ATTACH` of new files fail with SQLite's own error; there is no keyword filter to get around.
+- One statement per run. Results stop at 1000 rows.
+- Queries run synchronously on the server, so a very heavy query blocks the app until it finishes.
+- Local file only. With `TURSO_DATABASE_URL` set, the page reports that it cannot read a remote database.
+
 After changing `src/db/schema.ts`, run `bun run db:generate` to add a migration.
 
 ## Known limits

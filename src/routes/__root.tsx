@@ -3,6 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import {
 	createRootRouteWithContext,
 	HeadContent,
+	Link,
 	Scripts,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
@@ -44,6 +45,23 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 				<HeadContent />
 			</head>
 			<body>
+				<nav className="mx-auto flex max-w-7xl gap-4 px-4 pt-4 text-sm sm:px-8">
+					<Link
+						to="/"
+						className="text-muted-foreground"
+						activeProps={{ className: "text-foreground" }}
+						activeOptions={{ exact: true }}
+					>
+						Portfolio
+					</Link>
+					<Link
+						to="/sql"
+						className="text-muted-foreground"
+						activeProps={{ className: "text-foreground" }}
+					>
+						SQL
+					</Link>
+				</nav>
 				{children}
 				<TanStackDevtools
 					config={{
