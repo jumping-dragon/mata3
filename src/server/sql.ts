@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { dbReady, localDbPath } from "#/db";
+import { dbReady, dbUrl, localDbPath } from "#/db";
 
 const MAX_ROWS = 1000;
 
@@ -17,17 +17,21 @@ export type TableInfo = {
 	columns: { name: string; type: string }[];
 };
 
-// One query's output, shared by bun:sqlite and node:sqlite.
+// One query's output, shared by bun:sqlite, node:sqlite and the libSQL client.
 type QueryOutput = { columnNames: string[]; rows: unknown[][] };
 type ReadOnlyDb = { query(sql: string): Promise<QueryOutput> };
 
 let readOnly: Promise<ReadOnlyDb> | undefined;
 
-// A separate connection opened with SQLITE_OPEN_READONLY, so SQLite itself
-// rejects writes, schema changes, PRAGMA writes and ATTACH of new files; no
-// keyword filtering is involved. libsql ignores its `readonly` option as of
-// libsql 0.5.29, so this uses the runtime's built-in SQLite: `bun --bun run
-// dev` runs under bun, plain `bun run dev` runs vite under node.
+// Every path gets its read-only guarantee from the database, not from keyword
+// filtering:
+// - Local file: a separate connection opened with SQLITE_OPEN_READONLY, so
+//   SQLite rejects writes, schema changes, PRAGMA writes and ATTACH of new
+//   files. libsql ignores its `readonly` option as of libsql 0.5.29, so this
+//   uses the runtime's built-in SQLite: `bun --bun run dev` runs under bun,
+//   plain `bun run dev` and Vercel run under node.
+// - Remote Turso: a separate client authenticated with a read-only token
+//   (`turso db tokens create <db> --read-only`), so Turso rejects writes.
 function readOnlyDb(): Promise<ReadOnlyDb> {
 	readOnly ??= open();
 	readOnly.catch(() => {
@@ -37,12 +41,8 @@ function readOnlyDb(): Promise<ReadOnlyDb> {
 }
 
 async function open(): Promise<ReadOnlyDb> {
+	if (!localDbPath) return openRemote();
 	const path = localDbPath;
-	if (!path) {
-		throw new Error(
-			"The SQL page reads the local database file only; TURSO_DATABASE_URL points at a remote database.",
-		);
-	}
 	// A read-only connection cannot create the WAL index (-shm) file, so let the
 	// app's own connection create it first.
 	await dbReady();
@@ -71,8 +71,35 @@ async function open(): Promise<ReadOnlyDb> {
 	};
 }
 
+async function openRemote(): Promise<ReadOnlyDb> {
+	const token = process.env.TURSO_READONLY_AUTH_TOKEN;
+	if (!token) {
+		throw new Error(
+			"Set TURSO_READONLY_AUTH_TOKEN to a read-only token (turso db tokens create <db> --read-only) to query the remote database.",
+		);
+	}
+	if (token === process.env.TURSO_AUTH_TOKEN) {
+		throw new Error(
+			"TURSO_READONLY_AUTH_TOKEN is the same as TURSO_AUTH_TOKEN, which can write. Create a separate token with --read-only.",
+		);
+	}
+	const { createClient } = await import("@libsql/client");
+	const client = createClient({ url: dbUrl, authToken: token });
+	return {
+		async query(sql) {
+			const rs = await client.execute(sql);
+			return {
+				columnNames: rs.columns,
+				rows: rs.rows.map((row) => Array.from(row)),
+			};
+		},
+	};
+}
+
 function toCell(v: unknown): Cell {
-	if (v instanceof Uint8Array) return `<blob ${v.byteLength} bytes>`;
+	if (v instanceof Uint8Array || v instanceof ArrayBuffer) {
+		return `<blob ${v.byteLength} bytes>`;
+	}
 	if (typeof v === "bigint") return v.toString();
 	return v as Cell;
 }

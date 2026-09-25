@@ -15,7 +15,9 @@
     "lint": "biome lint",
     "check": "biome check",
     "db:generate": "drizzle-kit generate",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "db:migrate": "drizzle-kit migrate",
+    "build:vercel": "test -n \"$TURSO_DATABASE_URL\" || { echo \"TURSO_DATABASE_URL is not set for this Vercel environment\" >&2; exit 1; }; bun run db:migrate && bun run build"
   },
   "dependencies": {
     "@codemirror/lang-sql": "^6.10.0",
@@ -40,6 +42,7 @@
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.3",
     "lucide-react": "^0.577.0",
+    "nitro": "3.0.260610-beta",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "sql-formatter": "^15.9.0",
